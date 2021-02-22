@@ -47,4 +47,6 @@ public class Productdto {
                 ", title='" + title + '\'' +
                 '}';
     }
+
+
 }

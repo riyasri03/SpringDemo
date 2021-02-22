@@ -5,6 +5,10 @@ import java.util.List;
 public class SearchResponsedto {
     private List<Productdto> products;
 
+    public SearchResponsedto() {
+
+    }
+
     public List<Productdto> getProducts() {
         return products;
     }
