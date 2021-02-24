@@ -1,10 +1,12 @@
 package com.example.Springdemo1.service.impl;
 
 import com.example.Springdemo1.client.SearchClient;
+import com.example.Springdemo1.constant.SolrFieldNames;
 import com.example.Springdemo1.dto.Productdto;
 import com.example.Springdemo1.dto.SearchRequestdto;
 import com.example.Springdemo1.dto.SearchResponsedto;
 import com.example.Springdemo1.service.SearchService;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -12,71 +14,66 @@ import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
 
 @Service
 public class SearchServiceImpl implements SearchService {
+
+    private  static final int POOL_SIZE = 2;
     @Autowired
     private SearchClient searchClient;
-
     @Override
-    public SearchResponsedto getProducts(SearchRequestdto request){
+    public SearchResponsedto getProducts(SearchRequestdto request) {
 
-        SearchResponsedto responsedto= new SearchResponsedto();
-        Map<String, Object> location= searchClient.getProducts("stockLocation"+request.getLocation());
-        List<LinkedHashMap<String, Object>> m=(List<LinkedHashMap<String, Object>>) ((Map)location.get("response")).get("docs");
-        List<Productdto> product2= new ArrayList<>();
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        SearchResponsedto responseDTO = new SearchResponsedto();
+        ExecutorService threadPool = Executors.newFixedThreadPool(POOL_SIZE);
 
-        Runnable task1=() ->{
-            System.out.println(Thread.currentThread().getId());
-            List<Productdto> product1 =getStringObjectMap(request.getSearchTerm());
-            responsedto.setProducts(product1);
-        };
+        threadPool.execute(() -> {
 
+            String searchTermQuery = request.getSearchTerm();
+            List<Productdto> productDTOS = getSearchTermBaseProducts(searchTermQuery);
+            responseDTO.setProducts(productDTOS);
 
+        });
 
-     Runnable task2=() ->{
-         System.out.println(Thread.currentThread().getId());
-         for(LinkedHashMap<String,Object> k:m){
-             Productdto productdto= new Productdto();
-             productdto.setDescription((String) k.get("description"));
-             productdto.setInstock((int) k.get("isInStock") == 1? true: false );
-             productdto.setTitle((String)k.get("nameSearch") );
-             productdto.setSalePrice(((Double)k.get("offerPrice")).intValue());
-             product2.add(productdto);
-         }
+        threadPool.execute(() -> {
 
-         responsedto.setLocationBasedProducts(product2);
-
-     };
-        executor.execute(task1);
-        executor.execute(task2);
-        executor.shutdown();
-        try {
-            executor.awaitTermination(60, TimeUnit.SECONDS);
-        }
-        catch (InterruptedException e)
-        {
-            e.printStackTrace();
-        }
+                String locationQuery = SolrFieldNames.STOCK_LOCATION + ":\"" + request.getLocation() + "\"";
+                List<Productdto> locationProductDTOs = getSearchTermBaseProducts(locationQuery);
+                responseDTO.setLocationBasedProducts(locationProductDTOs);
 
 
-
-        return responsedto;
+        });
+        awaitTerminationAfterShutdown(threadPool);
+        return responseDTO;
     }
-
-    private List<Productdto> getStringObjectMap(String query) {
-        Map<String, Object> products= searchClient.getProducts(query);
-        List<LinkedHashMap<String, Object>> l=(List<LinkedHashMap<String, Object>>) ((Map)products.get("response")).get("docs");
-        List<Productdto> product1= new ArrayList<>();
-        for(LinkedHashMap<String,Object> k:l){
-            Productdto productdto= new Productdto();
-            productdto.setDescription((String) k.get("description"));
-            productdto.setInstock((int) k.get("isInStock") == 1? true: false );
-            productdto.setTitle((String)k.get("nameSearch") );
-            productdto.setSalePrice(((Double)k.get("offerPrice")).intValue());
-            product1.add(productdto);
+    private void awaitTerminationAfterShutdown(ExecutorService threadPool) {
+        threadPool.shutdown();
+        try {
+            if (!threadPool.awaitTermination(60, TimeUnit.SECONDS)) {
+                threadPool.shutdownNow();
+            }
+        } catch (InterruptedException ex) {
+            threadPool.shutdownNow();
+            Thread.currentThread().interrupt();
         }
-        return product1;
+    }
+    private List<Productdto> getSearchTermBaseProducts(String query) {
+        Map<String, Object> productResponse = searchClient.getProducts(query);
+        System.out.println(query);
+        Map<String, Object> responseObject = (Map<String, Object>) (productResponse.get("response"));
+        List<Map<String, Object>> products = (List<Map<String, Object>>) responseObject.get("docs");
+        List<Productdto> productDTOS = new ArrayList<>();
+        for (Map<String, Object> productClientResponse :products) {
+            String title = (String) productClientResponse.get(SolrFieldNames.NAME);
+            boolean inStock = (int) productClientResponse.get(SolrFieldNames.IN_STOCK) == 1? true: false;
+            String description = (String) productClientResponse.get(SolrFieldNames.DESCRIPTION);
+            Productdto productDTO = new Productdto();
+            productDTO.setInstock(inStock);
+            productDTO.setTitle(title);
+            productDTO.setDescription(description);
+            productDTOS.add(productDTO);
+        }
+        return productDTOS;
     }
 }
